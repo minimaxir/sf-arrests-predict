@@ -1,0 +1,31 @@
+---
+title: "Predicting When and Where Arrests Will Occur in San Francisco with xgboost"
+author: "Max Woolf (@minimaxir)"
+date: "January 2nd, 2017"
+output:
+  html_notebook:
+    highlight: tango
+    mathjax: null
+    number_sections: yes
+    theme: spacelab
+    toc: yes
+    toc_float: yes
+---
+
+This R Notebook is the complement to my blog post [Playing with 80 Million Amazon Product Review Ratings Using Apache Spark](http://minimaxir.com/2017/01/amazon-spark/).
+
+This notebook is licensed under the MIT License. If you use the code or data visualization designs contained within this notebook, it would be greatly appreciated if proper attribution is given back to this notebook and/or myself. Thanks! :)
+
+# Setup
+
+Setup the R packages.
+
+```{r setup}
+library(xgboost)
+
+source("Rstart.R")
+```
+
+```{r}
+sessionInfo()
+```
