@@ -20,8 +20,15 @@ This notebook is licensed under the MIT License. If you use the code or data vis
 
 Setup the R packages.
 
+devtools::install("/Users/maxwoolf/Downloads/xgboost/R-package", force=TRUE)
+
 ```{r setup}
+# Installing ftom CRAN does not install parallel processing
+# must follow instructions for parallel. macOS example:
+# http://stackoverflow.com/a/38514224
+
 library(xgboost)
+library(caret)
 
 source("Rstart.R")
 ```
@@ -29,3 +36,88 @@ source("Rstart.R")
 ```{r}
 sessionInfo()
 ```
+
+Import data, and only keep relevant columns. Filter on Arrests only.
+
+The data must be randomized for `xgboost` to give unbiased scores. Can do with dplyr's `sample_frac`.
+
+```{r}
+file_path <- "~/Downloads/SFPD_Incidents_-_from_1_January_2003.csv"
+
+df <- read_csv(file_path, col_types="_c_ccc_c_nn__") %>%
+        filter(grepl("ARREST", Resolution))
+
+# seed for sample_frac()
+set.seed(123)
+
+df <- df %>% sample_frac()
+
+df %>% head()
+```
+
+# Feature Engineering
+
+Engineer features for `xgboost`.
+
+Categorical Features must be factors for one-hot encoding.
+
+## Month, Hour, Year
+
+```{r}
+df <- df %>%
+        mutate(month = factor(substring(Date, 1, 2)),
+                hour = factor(substring(Time, 1, 2)),
+                year = factor(substring(Date, 7, 10)))
+
+df %>% select(month, hour, year) %>% head()
+```
+
+## Category Indices
+
+`xgboost` only accepts indices as labels, so map the category to an index. Labels must be zero-indexed.
+
+```{r}
+df <- df %>%
+        mutate(category_index = as.numeric(factor(Category)) - 1)
+
+df %>% select(category_index, Category) %>% head()
+```
+
+
+## Existing DayOfWeek to Factor
+
+Change DayOfWeek to Factor.
+
+```{r}
+df <- df %>%
+        mutate(DayOfWeek = factor(DayOfWeek))
+
+df %>% select(DayOfWeek) %>% head()
+```
+
+
+# xgboost Training
+
+Convert the factor variables into dummy variables: `model.matrix()` can do this in R natively. (via [Stack Overflow](http://stackoverflow.com/a/5048727))
+
+Note that matrix is dense without a dependency (303MB in memory).
+
+```{r}
+# model.matrix() adds an Intercept column: the "-1" removes it.
+train <- model.matrix(~ X + Y + hour + month + year + DayOfWeek - 1, df)
+
+train[1:10,]
+```
+
+The objective is `multi:softprob` since there are many classes.
+
+```{r}
+set.seed(123)
+
+bst <- xgboost(data = train, label = df$category_index, nthread = 8, nrounds = 2, subsample = 0.5, objective = "multi:softprob", eval_metric="mlogloss", num_class = length(table((df$category_index))))
+```
+
+```{r}
+bst
+```
+

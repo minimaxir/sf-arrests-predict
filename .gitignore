@@ -2,3 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
+sf-arrests-predict.nb.html
+xgboost*
