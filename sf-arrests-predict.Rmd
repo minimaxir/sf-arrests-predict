@@ -24,7 +24,6 @@ install.packages("/Users/maxwoolf/Downloads/xgboost/R-package", repos = NULL, ty
 
 ```{r setup}
 library(lightgbm)
-library(caret)
 library(Matrix)
 
 source("Rstart.R")
@@ -73,7 +72,7 @@ df %>% select(month, hour, year) %>% head()
 
 ## Category Indices
 
-`xgboost` only accepts indices as labels, so map the category to an index. Labels must be zero-indexed.
+Map the category to an index. Labels must be zero-indexed.
 
 ```{r}
 df <- df %>%
@@ -95,7 +94,7 @@ df %>% select(DayOfWeek) %>% head()
 ```
 
 
-# xgboost Training
+# lightgbm Training
 
 Convert the factor variables into dummy variables: `model.matrix()` can do this in R natively. (via [Stack Overflow](http://stackoverflow.com/a/5048727))
 
@@ -125,6 +124,19 @@ preds <- predict(bst, train[1:2,])
 preds
 length(preds)
 ```
+
+Use LightGBM's categorical data feature.
+
+```{r}
+train <- lgb.Dataset(df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix(),
+                     colnames = list("X", "Y", "hour", "month", "year", "DayOfWeek"),
+                     categorical_feature = list("hour", "month", "DayOfWeek"),
+                     label = df$category_index, free_raw_data=F)
+num_classes <- length(unique(df$category_index))
+
+bst <- lightgbm(data = train, nrounds = 200, num_threads=4, objective = "multiclass", metric="multi_logloss", num_class=num_classes, early_stopping_rounds = 3, nfolds=5, verbose = 1)
+```
+
 
 `preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for the predicted label (label with the largest probability) and the corresponding probability.
 
