@@ -20,12 +20,16 @@ This notebook is licensed under the MIT License. If you use the code or data vis
 
 Setup the R packages.
 
-devtools::install("/Users/maxwoolf/Downloads/xgboost/R-package", force=TRUE)
+install.packages("/Users/maxwoolf/Downloads/xgboost/R-package", repos = NULL, type="source")
 
 ```{r setup}
 # Installing ftom CRAN does not install parallel processing
 # must follow instructions for parallel. macOS example:
-# http://stackoverflow.com/a/38514224
+# https://www.ibm.com/developerworks/community/blogs/jfp/entry/Installing_XGBoost_on_Mac_OSX?lang=en
+# http://stackoverflow.com/questions/35709524/how-to-make-r-package-xgboost-parallel-in-os-x-with-openmp-compilation
+#
+# Install locally after compile via:
+# devtools::install("/Users/maxwoolf/Downloads/xgboost/R-package", force=TRUE)
 
 library(xgboost)
 library(caret)
@@ -114,10 +118,21 @@ The objective is `multi:softprob` since there are many classes.
 ```{r}
 set.seed(123)
 
-bst <- xgboost(data = train, label = df$category_index, nthread = 8, nrounds = 2, subsample = 0.5, objective = "multi:softprob", eval_metric="mlogloss", num_class = length(table((df$category_index))))
+bst <- xgboost(data = train, label = df$category_index, nrounds = 2, subsample = 0.5, objective = "multi:softprob", eval_metric="mlogloss", num_class = length(table((df$category_index))))
 ```
 
 ```{r}
 bst
+```
+
+```{r}
+importance <- xgb.importance(colnames(train), model=bst)
+
+importance
+xgb.ggplot.importance(importance, top_n=10)
+```
+
+```{r}
+xgb.plot.multi.trees(model = bst, feature_names = colnames(train), features_keep = 3)
 ```
 
