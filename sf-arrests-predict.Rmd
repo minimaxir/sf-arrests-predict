@@ -60,11 +60,13 @@ Categorical Features must be factors for one-hot encoding.
 
 ## Month, Hour, Year
 
+Year is # years since the lowest year (in this case, 2003, as noted in the dataset title)
+
 ```{r}
 df <- df %>%
         mutate(month = factor(substring(Date, 1, 2)),
                 hour = factor(substring(Time, 1, 2)),
-                year = factor(substring(Date, 7, 10)))
+                year = as.numeric(substring(Date, 7, 10)) - 2003)
 
 df %>% select(month, hour, year) %>% head()
 ```
@@ -103,19 +105,19 @@ Convert the factor variables into dummy variables: `model.matrix()` can do this 
 # Matrix converts the dense matrix to sparse (reduces memory footprint to 25%).
 train <- Matrix(model.matrix(~ X + Y + hour + month + year + DayOfWeek - 1, df))
 num_classes <- length(unique(df$category_index))
-num_row <- nrow(train)
+num_rows <- nrow(train)
 
 train[1:10,]
 ```
 
-The objective is `multi:softprob` since there are many classes.
+The objective is `multi_logloss` since there are many classes. The `multiclass` objective returns a probability for each class.
 
 Demo: https://github.com/Microsoft/LightGBM/blob/master/R-package/tests/testthat/test_basic.R#L29
 
-```{r}
+```{r, include=FALSE}
 set.seed(123)
 
-bst <- lightgbm(data = train, label = df$category_index, nrounds = 10, nfold=5, objective = "multiclass", metric="multi_error", num_class=length(unique(df$category_index)))
+bst <- lightgbm(data = train, label = df$category_index, nrounds = 200, nthreads=8, objective = "multiclass", metric="multi_logloss", num_class=num_classes, early_stopping_rounds = 3, nfolds=5, verbose = 0)
 ```
 
 ```{r}
@@ -124,18 +126,21 @@ preds
 length(preds)
 ```
 
-`preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for prediction vectors + probs.
+`preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for the predicted label (label with the largest probability) and the corresponding probability.
 
 ```{r}
-preds_matrix <- Matrix(predict(bst, train[1:2,]), byrow=T, num_row, num_classes)
+preds_matrix <- matrix(predict(bst, train), byrow=T, num_rows, num_classes)
 
-preds_matrix[1:2,]
+preds_cor <- cor(preds_matrix)
+
+preds_matrix[1:6,]
 
 results <- t(apply(preds_matrix, 1, function (x) {
   max_index = which(x==max(x))
   return (c(max_index-1, x[max_index]))
 }))
 
-results
+results[1:6,]
+rm(preds_matrix)
 ```
 
