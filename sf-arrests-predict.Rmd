@@ -1,5 +1,5 @@
 ---
-title: "Predicting When and Where Arrests Will Occur in San Francisco with xgboost"
+title: "Predicting When and Where Arrests Will Occur in San Francisco with LightGBM"
 author: "Max Woolf (@minimaxir)"
 date: "January 2nd, 2017"
 output:
@@ -23,16 +23,9 @@ Setup the R packages.
 install.packages("/Users/maxwoolf/Downloads/xgboost/R-package", repos = NULL, type="source")
 
 ```{r setup}
-# Installing ftom CRAN does not install parallel processing
-# must follow instructions for parallel. macOS example:
-# https://www.ibm.com/developerworks/community/blogs/jfp/entry/Installing_XGBoost_on_Mac_OSX?lang=en
-# http://stackoverflow.com/questions/35709524/how-to-make-r-package-xgboost-parallel-in-os-x-with-openmp-compilation
-#
-# Install locally after compile via:
-# devtools::install("/Users/maxwoolf/Downloads/xgboost/R-package", force=TRUE)
-
-library(xgboost)
+library(lightgbm)
 library(caret)
+library(Matrix)
 
 source("Rstart.R")
 ```
@@ -104,35 +97,45 @@ df %>% select(DayOfWeek) %>% head()
 
 Convert the factor variables into dummy variables: `model.matrix()` can do this in R natively. (via [Stack Overflow](http://stackoverflow.com/a/5048727))
 
-Note that matrix is dense without a dependency (303MB in memory).
 
 ```{r}
 # model.matrix() adds an Intercept column: the "-1" removes it.
-train <- model.matrix(~ X + Y + hour + month + year + DayOfWeek - 1, df)
+# Matrix converts the dense matrix to sparse (reduces memory footprint to 25%).
+train <- Matrix(model.matrix(~ X + Y + hour + month + year + DayOfWeek - 1, df))
+num_classes <- length(unique(df$category_index))
+num_row <- nrow(train)
 
 train[1:10,]
 ```
 
 The objective is `multi:softprob` since there are many classes.
 
+Demo: https://github.com/Microsoft/LightGBM/blob/master/R-package/tests/testthat/test_basic.R#L29
+
 ```{r}
 set.seed(123)
 
-bst <- xgboost(data = train, label = df$category_index, nrounds = 2, subsample = 0.5, objective = "multi:softprob", eval_metric="mlogloss", num_class = length(table((df$category_index))))
+bst <- lightgbm(data = train, label = df$category_index, nrounds = 10, nfold=5, objective = "multiclass", metric="multi_error", num_class=length(unique(df$category_index)))
 ```
 
 ```{r}
-bst
+preds <- predict(bst, train[1:2,])
+preds
+length(preds)
 ```
 
-```{r}
-importance <- xgb.importance(colnames(train), model=bst)
-
-importance
-xgb.ggplot.importance(importance, top_n=10)
-```
+`preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for prediction vectors + probs.
 
 ```{r}
-xgb.plot.multi.trees(model = bst, feature_names = colnames(train), features_keep = 3)
+preds_matrix <- Matrix(predict(bst, train[1:2,]), byrow=T, num_row, num_classes)
+
+preds_matrix[1:2,]
+
+results <- t(apply(preds_matrix, 1, function (x) {
+  max_index = which(x==max(x))
+  return (c(max_index-1, x[max_index]))
+}))
+
+results
 ```
 

@@ -4,3 +4,4 @@
 .Ruserdata
 sf-arrests-predict.nb.html
 xgboost*
+lightgbm*
