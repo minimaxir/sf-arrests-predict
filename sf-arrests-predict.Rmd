@@ -1,5 +1,5 @@
 ---
-title: "Predicting When and Where Arrests Will Occur in San Francisco with LightGBM"
+title: "Predicting And Mapping Future Arrests in San Francisco with LightGBM and R"
 author: "Max Woolf (@minimaxir)"
 date: "January 2nd, 2017"
 output:
@@ -25,6 +25,7 @@ install.packages("/Users/maxwoolf/Downloads/xgboost/R-package", repos = NULL, ty
 ```{r setup}
 library(lightgbm)
 library(Matrix)
+library(caret)
 
 source("Rstart.R")
 ```
@@ -35,14 +36,16 @@ sessionInfo()
 
 Import data, and only keep relevant columns. Filter on Arrests only.
 
-The data must be randomized for `xgboost` to give unbiased scores. Can do with dplyr's `sample_frac`.
+The data must be randomized for `lightgbm` to give unbiased scores. Can do with dplyr's `sample_frac`.
 
-```{r}
+```{r, include=FALSE}
 file_path <- "~/Downloads/SFPD_Incidents_-_from_1_January_2003.csv"
 
 df <- read_csv(file_path, col_types="_c_ccc_c_nn__") %>%
         filter(grepl("ARREST", Resolution))
+```
 
+```{r}
 # seed for sample_frac()
 set.seed(123)
 
@@ -53,9 +56,7 @@ df %>% head()
 
 # Feature Engineering
 
-Engineer features for `xgboost`.
-
-Categorical Features must be factors for one-hot encoding.
+Engineer features for `lightgbm`.
 
 ## Month, Hour, Year
 
@@ -70,6 +71,17 @@ df <- df %>%
 df %>% select(month, hour, year) %>% head()
 ```
 
+## Existing DayOfWeek to Factor
+
+Change DayOfWeek to Factor. (not strictly necessary in this case, but reduces memory usage)
+
+```{r}
+df <- df %>%
+        mutate(DayOfWeek = factor(DayOfWeek))
+
+df %>% select(DayOfWeek) %>% head()
+```
+
 ## Category Indices
 
 Map the category to an index. Labels must be zero-indexed.
@@ -81,20 +93,88 @@ df <- df %>%
 df %>% select(category_index, Category) %>% head()
 ```
 
+# lightgbm Training
 
-## Existing DayOfWeek to Factor
+Use LightGBM's categorical data feature for optimial performance.
 
-Change DayOfWeek to Factor.
+Use `caret` for train/test splitting since `createDataPartition` ensures balanced distribution of categories between train and test.
 
 ```{r}
-df <- df %>%
-        mutate(DayOfWeek = factor(DayOfWeek))
+# proportion of data to train on
+split <- 0.7
 
-df %>% select(DayOfWeek) %>% head()
+set.seed(123)
+trainIndex <- createDataPartition(df$category_index, p = split, list = FALSE, times = 1)
+
+dtrain <- lgb.Dataset((df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[trainIndex,],
+                     colnames = list("X", "Y", "hour", "month", "year", "DayOfWeek"),
+                     categorical_feature = list("hour", "month", "DayOfWeek"),
+                     label = df$category_index[trainIndex], free_raw_data=T)
+
+dtest <- lgb.Dataset.create.valid(dtrain,
+                                  (df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[-trainIndex,],
+                                  label = df$category_index[-trainIndex])
+
+params <- list(objective = "multiclass", metric = "multi_logloss")
+valids <- list(test=dtest)
+
+num_classes <- length(unique(df$category_index))
+```
+
+```{r}
+# determine elapsed runtime 
+system.time(
+
+# training output not printed to notebook since spammy. (verbose = 0 + record = T)
+bst <- lgb.train(params,
+                dtrain,
+                nrounds = 500,
+                valids,
+                num_threads = 4,
+                num_class = num_classes,
+                verbose = 0,
+                record = T,
+                early_stopping_rounds = 5
+                )
+
+)[3]
+
+# multilogloss of final iteration on test set
+paste("# Rounds:", bst$current_iter())
+paste("Multilogloss of best model:", bst$record_evals$test$multi_logloss$eval %>% unlist() %>% tail(1))
 ```
 
 
-# lightgbm Training
+`preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for the predicted label (label with the largest probability) and the corresponding probability.
+
+```{r}
+test <- lgb.Dataset(df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix() %>% head(6),
+                     colnames = list("X", "Y", "hour", "month", "year", "DayOfWeek"),
+                     categorical_feature = list("hour", "month", "DayOfWeek"))
+
+test <- (df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[-trainIndex,]
+
+preds_matrix <- matrix(predict(bst, test), byrow=T, num_rows, num_classes)
+
+preds_cor <- cor(preds_matrix)
+
+preds_matrix[1:6,]
+
+results <- t(apply(preds_matrix, 1, function (x) {
+  max_index = which(x==max(x))
+  return (c(max_index-1, x[max_index]))
+}))
+
+results[1:6,]
+rm(preds_matrix)
+```
+
+# Code Which Did Not Work Out (One-Hot Encoding)
+
+The categorical approach using LightGBM is better. Here is the former code using OHE.
+
+Categorical Features must be factors for one-hot encoding.
+
 
 Convert the factor variables into dummy variables: `model.matrix()` can do this in R natively. (via [Stack Overflow](http://stackoverflow.com/a/5048727))
 
@@ -124,35 +204,3 @@ preds <- predict(bst, train[1:2,])
 preds
 length(preds)
 ```
-
-Use LightGBM's categorical data feature.
-
-```{r}
-train <- lgb.Dataset(df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix(),
-                     colnames = list("X", "Y", "hour", "month", "year", "DayOfWeek"),
-                     categorical_feature = list("hour", "month", "DayOfWeek"),
-                     label = df$category_index, free_raw_data=F)
-num_classes <- length(unique(df$category_index))
-
-bst <- lightgbm(data = train, nrounds = 200, num_threads=4, objective = "multiclass", metric="multi_logloss", num_class=num_classes, early_stopping_rounds = 3, nfolds=5, verbose = 1)
-```
-
-
-`preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for the predicted label (label with the largest probability) and the corresponding probability.
-
-```{r}
-preds_matrix <- matrix(predict(bst, train), byrow=T, num_rows, num_classes)
-
-preds_cor <- cor(preds_matrix)
-
-preds_matrix[1:6,]
-
-results <- t(apply(preds_matrix, 1, function (x) {
-  max_index = which(x==max(x))
-  return (c(max_index-1, x[max_index]))
-}))
-
-results[1:6,]
-rm(preds_matrix)
-```
-
