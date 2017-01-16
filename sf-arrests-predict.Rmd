@@ -148,13 +148,10 @@ paste("Multilogloss of best model:", bst$record_evals$test$multi_logloss$eval %>
 `preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for the predicted label (label with the largest probability) and the corresponding probability.
 
 ```{r}
-test <- lgb.Dataset(df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix() %>% head(6),
-                     colnames = list("X", "Y", "hour", "month", "year", "DayOfWeek"),
-                     categorical_feature = list("hour", "month", "DayOfWeek"))
-
 test <- (df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[-trainIndex,]
 
-preds_matrix <- matrix(predict(bst, test), byrow=T, num_rows, num_classes)
+# predict() has a reshape parameter but it doesn't work oddly
+preds_matrix <- matrix(predict(bst, test), byrow=T, nrow(test), num_classes)
 
 preds_cor <- cor(preds_matrix)
 
@@ -164,9 +161,24 @@ results <- t(apply(preds_matrix, 1, function (x) {
   max_index = which(x==max(x))
   return (c(max_index-1, x[max_index]))
 }))
+```
 
-results[1:6,]
-rm(preds_matrix)
+```{r}
+df_results <- data.frame(results, label_act = df$category_index[-trainIndex]) %>%
+                tbl_df() %>%
+                transmute(label_pred = X1, prod_pred = X2, label_act)
+
+df_results %>% arrange(desc(prod_pred)) %>% head(20)
+
+#rm(preds_matrix)
+#rm(test)
+```
+
+
+Confusion matrix:
+
+```{r}
+confusionMatrix(df_results$label_pred, df_results$label_act)
 ```
 
 # Code Which Did Not Work Out (One-Hot Encoding)
