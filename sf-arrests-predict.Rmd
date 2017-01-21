@@ -1,5 +1,5 @@
 ---
-title: "Predicting And Mapping Future Arrests in San Francisco with LightGBM and R"
+title: "Predicting And Mapping Police Arrests in San Francisco with LightGBM and R"
 author: "Max Woolf (@minimaxir)"
 date: "January 2nd, 2017"
 output:
@@ -101,14 +101,14 @@ Use `caret` for train/test splitting since `createDataPartition` ensures balance
 
 ```{r}
 # proportion of data to train on
-split <- 0.7
+split <- 0.9
 
 set.seed(123)
 trainIndex <- createDataPartition(df$category_index, p = split, list = FALSE, times = 1)
 
 dtrain <- lgb.Dataset((df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[trainIndex,],
-                     colnames = list("X", "Y", "hour", "month", "year", "DayOfWeek"),
-                     categorical_feature = list("hour", "month", "DayOfWeek"),
+                     colnames = c("X", "Y", "hour", "month", "year", "DayOfWeek"),
+                     categorical_feature = c("hour", "month", "DayOfWeek"),
                      label = df$category_index[trainIndex], free_raw_data=T)
 
 dtest <- lgb.Dataset.create.valid(dtrain,
@@ -120,6 +120,8 @@ valids <- list(test=dtest)
 
 num_classes <- length(unique(df$category_index))
 ```
+
+The size of the training set is **`r length(trainIndex) %>% format(big.mark=",")`** and the size of the test set is **`r (df %>% nrow() - length(trainIndex)) %>% format(big.mark=",")`**.
 
 ```{r}
 # determine elapsed runtime 
