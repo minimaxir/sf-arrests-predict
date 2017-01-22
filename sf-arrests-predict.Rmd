@@ -180,8 +180,61 @@ df_results %>% arrange(desc(prod_pred)) %>% head(20)
 Confusion matrix:
 
 ```{r}
-confusionMatrix(df_results$label_pred, df_results$label_act)
+cm <- confusionMatrix(df_results$label_pred, df_results$label_act)
+
+data.frame(cm$overall)
 ```
+
+# Visualization
+
+Plot the confusion matrix. Fortunately, matrix is already in long format.
+
+```{r}
+df_cm <- tbl_df(data.frame(cm$table))
+
+df_cm %>% head(100)
+```
+
+Map the labels to the indices.
+
+```{r}
+# create mapping df
+df_labels <- df %>%
+              select(category_index, Category) %>%
+              group_by(category_index, Category) %>%
+              summarize() %>%
+              ungroup() %>%
+              mutate(category_index = factor(category_index))
+
+df_cm <- df_cm %>%
+                left_join(df_labels, by = c("Prediction" = "category_index")) %>%
+                left_join(df_labels, by = c("Reference" = "category_index")) %>%
+                rename(label_pred = Category.x, label_act = Category.y)
+
+df_cm %>% head(100)
+```
+
+Plot the confusion matrix. Since 39 labels, confusion matrix will be large to fit all labels. Will also need to log-scale.
+
+```{r}
+# create a data frame of "correct values" to annotate
+df_correct = df_cm %>% filter(label_pred == label_act)
+
+plot <- ggplot(df_cm, aes(x=label_act, y=label_pred, fill = Freq)) +
+          geom_tile() +
+          geom_point(data=df_correct, color="white", size=0.8) +
+          fte_theme() +
+          scale_x_discrete() +
+          scale_y_discrete() +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.75, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90)) +
+            scale_fill_viridis(name="# of Preds", labels=comma, breaks=10^(0:4), trans="log10") +
+            labs(title = "Confusion Matrix between 63,144 Predicted SFPD Arrest Labels and Actual",
+                 x = "Actual Label of Arrest",
+                 y = "Predicted Label of Arrest")
+
+max_save(plot, "confusionMatrix", "SF Open Data", h=6, w=6, tall=T)
+```
+
 
 # Code Which Did Not Work Out (One-Hot Encoding)
 
