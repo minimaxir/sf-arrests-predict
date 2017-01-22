@@ -66,7 +66,7 @@ Year is # years since the lowest year (in this case, 2003, as noted in the datas
 df <- df %>%
         mutate(month = factor(substring(Date, 1, 2)),
                 hour = factor(substring(Time, 1, 2)),
-                year = as.numeric(substring(Date, 7, 10)) - 2003)
+                year = as.numeric(substring(Date, 7, 10)))
 
 df %>% select(month, hour, year) %>% head()
 ```
@@ -185,7 +185,9 @@ cm <- confusionMatrix(df_results$label_pred, df_results$label_act)
 data.frame(cm$overall)
 ```
 
-# Visualization
+# Visualizations
+
+## Confusion Matrix
 
 Plot the confusion matrix. Fortunately, matrix is already in long format.
 
@@ -233,6 +235,49 @@ plot <- ggplot(df_cm, aes(x=label_act, y=label_pred, fill = Freq)) +
                  y = "Predicted Label of Arrest")
 
 max_save(plot, "confusionMatrix", "SF Open Data", h=6, w=6, tall=T)
+```
+
+
+## Correlations
+
+Covert the `preds_cor` matrix into long (adapted from http://stackoverflow.com/a/26838774)
+
+```{r}
+df_corr <- tbl_df(data.frame(Var1=c(row(preds_cor))-1, Var2=c(col(preds_cor))-1, value = c(preds_cor))) %>%
+            filter(Var1 <= Var2) %>%
+            mutate(Var1 = factor(Var1), Var2=factor(Var2))
+
+df_corr %>% head(100)
+```
+
+Plot similar chart to confusion matrix. Requires reordering correlations for cleaner chart: http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization)
+
+```{r}
+df_corr <- df_corr %>%
+                left_join(df_labels, by = c("Var1" = "category_index")) %>%
+                left_join(df_labels, by = c("Var2" = "category_index")) %>%
+                mutate(label1 = factor(Category.x), label2 = factor(Category.y))
+
+dd <- as.dist((1-preds_cor)/2)
+hc <- hclust(dd)
+label_order <- hc$order
+
+levels(df_corr$label1) <- levels(df_corr$label1)[label_order]
+levels(df_corr$label2) <- levels(df_corr$label2)[label_order]
+
+plot <- ggplot(df_corr, aes(x=label1, y=label2, fill=value)) +
+          geom_tile() +
+          fte_theme() +
+          scale_x_discrete() +
+          scale_y_discrete() +
+          coord_fixed() +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.75, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90), axis.title.y=element_blank(), axis.title.x=element_blank()) +
+            scale_fill_gradient2(high = "#2ecc71", low = "#e74c3c", mid = "white", 
+   midpoint = 0, limit = c(-0.5,0.5), 
+   name="Pearson\nCorrelation", breaks=pretty_breaks(8))  +
+            labs(title = "Confusion Matrix between 63,144 Predicted SFPD Arrest Labels and Actual")
+
+max_save(plot, "correlationMatrix", "SF Open Data", h=6, w=6, tall=T)
 ```
 
 
