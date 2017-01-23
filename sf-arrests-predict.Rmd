@@ -172,8 +172,7 @@ df_results <- data.frame(results, label_act = df$category_index[-trainIndex]) %>
 
 df_results %>% arrange(desc(prod_pred)) %>% head(20)
 
-#rm(preds_matrix)
-#rm(test)
+rm(preds_matrix)
 ```
 
 
@@ -242,15 +241,22 @@ max_save(plot, "confusionMatrix", "SF Open Data", h=6, w=6, tall=T)
 
 Covert the `preds_cor` matrix into long (adapted from http://stackoverflow.com/a/26838774)
 
+Requires reordering correlations for cleaner chart: http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization)
+
 ```{r}
-df_corr <- tbl_df(data.frame(Var1=c(row(preds_cor))-1, Var2=c(col(preds_cor))-1, value = c(preds_cor))) %>%
+dd <- as.dist((1-preds_cor)/2)
+hc <- hclust(dd, "centroid")
+label_order <- hc$order
+preds_cor_reorder <- preds_cor[label_order, label_order]
+
+df_corr <- tbl_df(data.frame(Var1=c(row(preds_cor_reorder))-1, Var2=c(col(preds_cor_reorder))-1, value = c(preds_cor_reorder))) %>%
             filter(Var1 <= Var2) %>%
             mutate(Var1 = factor(Var1), Var2=factor(Var2))
 
 df_corr %>% head(100)
 ```
 
-Plot similar chart to confusion matrix. Requires reordering correlations for cleaner chart: http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization)
+Plot similar chart to confusion matrix. 
 
 ```{r}
 df_corr <- df_corr %>%
@@ -258,10 +264,7 @@ df_corr <- df_corr %>%
                 left_join(df_labels, by = c("Var2" = "category_index")) %>%
                 mutate(label1 = factor(Category.x), label2 = factor(Category.y))
 
-dd <- as.dist((1-preds_cor)/2)
-hc <- hclust(dd)
-label_order <- hc$order
-
+# fix the label order to the reordered order from the hclust
 levels(df_corr$label1) <- levels(df_corr$label1)[label_order]
 levels(df_corr$label2) <- levels(df_corr$label2)[label_order]
 
@@ -271,15 +274,87 @@ plot <- ggplot(df_corr, aes(x=label1, y=label2, fill=value)) +
           scale_x_discrete() +
           scale_y_discrete() +
           coord_fixed() +
-          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.75, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90), axis.title.y=element_blank(), axis.title.x=element_blank()) +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.75, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90), axis.title.y=element_blank(), axis.title.x=element_blank(), plot.title=element_text(hjust=1)) +
             scale_fill_gradient2(high = "#2ecc71", low = "#e74c3c", mid = "white", 
    midpoint = 0, limit = c(-0.5,0.5), 
    name="Pearson\nCorrelation", breaks=pretty_breaks(8))  +
-            labs(title = "Confusion Matrix between 63,144 Predicted SFPD Arrest Labels and Actual")
+            labs(title = "Correlations between Predicted Multiclass Probabilities of 63,144 SFPD Arrest Category Labels")
 
 max_save(plot, "correlationMatrix", "SF Open Data", h=6, w=6, tall=T)
 ```
 
+# Mapping Arrests
+
+Reusing my mapping previous SF code: https://github.com/minimaxir/sf-arrests-when-where/blob/master/crime_data_sf.ipynb
+
+```{r}
+bbox = c(-122.516441,37.702072,-122.37276,37.811818)
+map <- get_map(location = bbox, source = "stamen", maptype = "toner-lite")
+```
+
+Create 40000 million latitude/longitude points in SF to simulate locations (200 points on x axis, 2000 points on y axis)
+
+```{r}
+grid_size = 200
+
+df_points <- data.frame(expand.grid(X=seq(bbox[1], bbox[3], length.out=grid_size),
+                                    Y=seq(bbox[2], bbox[4], length.out=grid_size)
+)
+)
+
+df_points %>% head()
+df_points %>% nrow()
+```
+
+Predict arrest types at each point on March 14th, 2017, at 8 PM.
+
+Populate data with same format of data (i.e. add month, hour, year, DayOfWeek). Does not require much customization. (DayOfWeek is a Factor, however)
+
+```{r}
+date_target <- as.POSIXct("2017-04-15 23:00:00")
+
+df_points <- df_points %>%
+              mutate(month = format(date_target, "%m"),
+                    hour = format(date_target, "%H"),
+                    year = format(date_target, "%Y"),
+                    DayOfWeek = which(levels(df$DayOfWeek) == format(date_target, "%A"))) %>%
+            data.matrix()
+
+df_points %>% head()
+```
+
+```{r}
+preds_matrix <- matrix(predict(bst, df_points), byrow=T, nrow(df_points), num_classes)
+
+results <- t(apply(preds_matrix, 1, function (x) {
+  max_index = which(x==max(x))
+  return (c(max_index-1, x[max_index]))
+}))
+
+rm(preds_matrix)
+```
+
+```{r}
+df_results <- data.frame(X=df_points[,1], Y=df_points[,2], label=factor(results[,1]), prob=results[,2]) %>%
+                tbl_df() %>%
+                left_join(df_labels, by=c("label" = "category_index")) %>%
+                mutate(Category = factor(Category))
+
+df_results %>% head(20)
+```
+
+```{r}
+plot <- ggmap(map) +
+            geom_raster(data = df_results %>% filter(Category != "OTHER OFFENSES"), aes(x=X, y=Y, fill=Category), alpha=0.8, size=0) +
+            coord_cartesian() +
+            fte_theme() +
+            theme(axis.text.x = element_blank(), axis.text.y = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+            theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(0.8, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), plot.title=element_text(hjust=0.5)) +
+            labs(title = sprintf("Locations of Predicted Types of Arrests on %s",
+                 format(date_target, '%B %d, %Y at %I %p')))
+
+max_save(plot, sprintf("crime-%s", format(date_target, '%Y-%m-%d-%H')), "SF Open Data", w = 6, h = 6, tall=T)
+```
 
 # Code Which Did Not Work Out (One-Hot Encoding)
 
