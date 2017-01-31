@@ -1,5 +1,5 @@
 ---
-title: "Predicting And Mapping Police Arrests in San Francisco with LightGBM and R"
+title: "Predicting And Mapping Police Arrest Types in San Francisco with LightGBM and R"
 author: "Max Woolf (@minimaxir)"
 date: "January 2nd, 2017"
 output:
@@ -20,8 +20,6 @@ This notebook is licensed under the MIT License. If you use the code or data vis
 
 Setup the R packages.
 
-install.packages("/Users/maxwoolf/Downloads/xgboost/R-package", repos = NULL, type="source")
-
 ```{r setup}
 library(lightgbm)
 library(Matrix)
@@ -39,10 +37,16 @@ Import data, and only keep relevant columns. Filter on Arrests only.
 The data must be randomized for `lightgbm` to give unbiased scores. Can do with dplyr's `sample_frac`.
 
 ```{r, include=FALSE}
+# Converts "LARCENY/THEFT" to "Larceny/Theft", etc.
+proper_case <- function(x) {
+    return (gsub("\\b([A-Z])([A-Z]+)", "\\U\\1\\L\\2" , x, perl = TRUE))
+}
+
 file_path <- "~/Downloads/SFPD_Incidents_-_from_1_January_2003.csv"
 
 df <- read_csv(file_path, col_types="_c_ccc_c_nn__") %>%
-        filter(grepl("ARREST", Resolution))
+        filter(grepl("ARREST", Resolution)) %>%
+        mutate(Category = proper_case(Category))
 ```
 
 ```{r}
@@ -73,11 +77,15 @@ df %>% select(month, hour, year) %>% head()
 
 ## Existing DayOfWeek to Factor
 
-Change DayOfWeek to Factor. (not strictly necessary in this case, but reduces memory usage)
+Change DayOfWeek to Factor.
+
+Since column become encoded as numeric instead of categorical, encode order of numerals such that Saturday and Sunday are adjacent for proper `lte`/`gte` behavior.
 
 ```{r}
+dow_order <- c("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+
 df <- df %>%
-        mutate(DayOfWeek = factor(DayOfWeek))
+        mutate(DayOfWeek = factor(DayOfWeek, levels=dow_order))
 
 df %>% select(DayOfWeek) %>% head()
 ```
@@ -100,6 +108,9 @@ Use LightGBM's categorical data feature for optimial performance.
 Use `caret` for train/test splitting since `createDataPartition` ensures balanced distribution of categories between train and test.
 
 ```{r}
+# declare categorical feature names
+categoricals <- NULL
+
 # proportion of data to train on
 split <- 0.9
 
@@ -108,7 +119,7 @@ trainIndex <- createDataPartition(df$category_index, p = split, list = FALSE, ti
 
 dtrain <- lgb.Dataset((df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[trainIndex,],
                      colnames = c("X", "Y", "hour", "month", "year", "DayOfWeek"),
-                     categorical_feature = c("hour", "month", "DayOfWeek"),
+                     categorical_feature = categoricals,
                      label = df$category_index[trainIndex], free_raw_data=T)
 
 dtest <- lgb.Dataset.create.valid(dtrain,
@@ -136,7 +147,8 @@ bst <- lgb.train(params,
                 num_class = num_classes,
                 verbose = 0,
                 record = T,
-                early_stopping_rounds = 5
+                early_stopping_rounds = 5,
+                categorical_feature = categoricals
                 )
 
 )[3]
@@ -145,6 +157,12 @@ bst <- lgb.train(params,
 paste("# Rounds:", bst$current_iter())
 paste("Multilogloss of best model:", bst$record_evals$test$multi_logloss$eval %>% unlist() %>% tail(1))
 ```
+Calculate variable importance. (note: takes awhile since single-threaded)
+
+```{r}
+df_imp <- tbl_df(lgb.importance(bst, percentage = TRUE))
+df_imp
+```
 
 
 `preds` is a 1D vector of probabilities for each vector, of nrows x nclasses. Reshape accordingly and iterate through for the predicted label (label with the largest probability) and the corresponding probability.
@@ -152,12 +170,11 @@ paste("Multilogloss of best model:", bst$record_evals$test$multi_logloss$eval %>
 ```{r}
 test <- (df %>% select(X, Y, hour, month, year, DayOfWeek) %>% data.matrix())[-trainIndex,]
 
-# predict() has a reshape parameter but it doesn't work oddly
-preds_matrix <- matrix(predict(bst, test), byrow=T, nrow(test), num_classes)
+preds_matrix <- predict(bst, test, reshape=T)
 
 preds_cor <- cor(preds_matrix)
 
-preds_matrix[1:6,]
+preds_matrix[1:2,]
 
 results <- t(apply(preds_matrix, 1, function (x) {
   max_index = which(x==max(x))
@@ -185,6 +202,27 @@ data.frame(cm$overall)
 ```
 
 # Visualizations
+
+## Importance Bar Chart
+
+```{r}
+df_imp$Feature <- factor(df_imp$Feature, levels=rev(df_imp$Feature))
+```
+
+
+```{r}
+plot <- ggplot(df_imp, aes(x=Feature, y=Gain)) +
+          geom_bar(stat="identity", fill="#34495e", alpha=0.9) +
+          geom_text(aes(label=sprintf("%0.1f%%", Gain*100)), color="#34495e", hjust=-0.25, family="Open Sans Condensed Bold", size=2.5) +
+          fte_theme() +
+          coord_flip() +
+          scale_y_continuous(limits = c(0, 0.4), labels=percent) +
+   theme(plot.title=element_text(hjust=0.5), axis.title.y=element_blank()) +
+          labs(title="Feature Importance for SF Arrest Type Model", y="% of Total Gain in LightGBM Model")
+
+max_save(plot, "imp", "SF Open Data", h=2)
+```
+
 
 ## Confusion Matrix
 
@@ -219,21 +257,22 @@ Plot the confusion matrix. Since 39 labels, confusion matrix will be large to fi
 
 ```{r}
 # create a data frame of "correct values" to annotate
-df_correct = df_cm %>% filter(label_pred == label_act)
+df_correct <- df_cm %>% filter(label_pred == label_act)
 
 plot <- ggplot(df_cm, aes(x=label_act, y=label_pred, fill = Freq)) +
           geom_tile() +
           geom_point(data=df_correct, color="white", size=0.8) +
           fte_theme() +
+          coord_equal() +
           scale_x_discrete() +
           scale_y_discrete() +
-          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.75, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90)) +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.25, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), axis.text.x=element_text(angle=-90, size=6, vjust=0.5, hjust=0), axis.text.y=element_text(size=6)) +
             scale_fill_viridis(name="# of Preds", labels=comma, breaks=10^(0:4), trans="log10") +
             labs(title = "Confusion Matrix between 63,144 Predicted SFPD Arrest Labels and Actual",
                  x = "Actual Label of Arrest",
                  y = "Predicted Label of Arrest")
 
-max_save(plot, "confusionMatrix", "SF Open Data", h=6, w=6, tall=T)
+max_save(plot, "confusionMatrix", "SF Open Data", h=6, w=5, tall=T)
 ```
 
 
@@ -274,13 +313,13 @@ plot <- ggplot(df_corr, aes(x=label1, y=label2, fill=value)) +
           scale_x_discrete() +
           scale_y_discrete() +
           coord_fixed() +
-          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.75, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90), axis.title.y=element_blank(), axis.title.x=element_blank(), plot.title=element_text(hjust=1)) +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.25, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90, vjust=0.5, hjust=0), axis.title.y=element_blank(), axis.title.x=element_blank(), plot.title=element_text(hjust=1)) +
             scale_fill_gradient2(high = "#2ecc71", low = "#e74c3c", mid = "white", 
    midpoint = 0, limit = c(-0.5,0.5), 
    name="Pearson\nCorrelation", breaks=pretty_breaks(8))  +
             labs(title = "Correlations between Predicted Multiclass Probabilities of 63,144 SFPD Arrest Category Labels")
 
-max_save(plot, "correlationMatrix", "SF Open Data", h=6, w=6, tall=T)
+max_save(plot, "correlationMatrix", "SF Open Data", h=6, w=5, tall=T)
 ```
 
 # Mapping Arrests
@@ -314,8 +353,8 @@ Populate data with same format of data (i.e. add month, hour, year, DayOfWeek). 
 date_target <- as.POSIXct("2017-04-15 23:00:00")
 
 df_points <- df_points %>%
-              mutate(month = format(date_target, "%m"),
-                    hour = format(date_target, "%H"),
+              mutate(hour = format(date_target, "%H"),
+                    month = format(date_target, "%m"),
                     year = format(date_target, "%Y"),
                     DayOfWeek = which(levels(df$DayOfWeek) == format(date_target, "%A"))) %>%
             data.matrix()
@@ -345,12 +384,13 @@ df_results %>% head(20)
 
 ```{r}
 plot <- ggmap(map) +
-            geom_raster(data = df_results %>% filter(Category != "OTHER OFFENSES"), aes(x=X, y=Y, fill=Category), alpha=0.8, size=0) +
+            geom_raster(data = df_results %>% filter(Category != "Other Offenses"), aes(x=X, y=Y, fill=Category), alpha=0.8, size=0) +
             coord_cartesian() +
             fte_theme() +
+            scale_fill_brewer(palette = "Dark2") +
             theme(axis.text.x = element_blank(), axis.text.y = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
-            theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(0.8, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), plot.title=element_text(hjust=0.5)) +
-            labs(title = sprintf("Locations of Predicted Types of Arrests on %s",
+            theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="right", legend.key.width=unit(0.5, "cm"), legend.key.height=unit(2, "cm"), legend.margin=margin(1,0,1,0), plot.title=element_text(hjust=0, size=11)) +
+            labs(title = sprintf("Locations of Predicted Types of Arrests in San Francisco on %s",
                  format(date_target, '%B %d, %Y at %I %p')))
 
 max_save(plot, sprintf("crime-%s", format(date_target, '%Y-%m-%d-%H')), "SF Open Data", w = 6, h = 6, tall=T)

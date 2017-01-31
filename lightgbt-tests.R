@@ -20,20 +20,39 @@ length(unlist(bst$record_evals))
 
 library(lightgbm)
 library(caret)
+library(jsonlite)
 
 lb <- as.numeric(iris$Species) - 1
 
 set.seed(123)
-trainIndex_i <- createDataPartition(iris$Species, p = 0.7,  list = FALSE,  times = 1)
+trainIndex <- createDataPartition(iris$Species, p = 0.5,  list = FALSE,  times = 1)
 
-train_i <- lgb.Dataset(data = data.matrix(iris[trainIndex_i, -5]), label = lb[trainIndex_i])
-test_i <- lgb.Dataset.create.valid(train_i, data.matrix(iris[-trainIndex_i, -5]), label = lb[-trainIndex_i])
+# w/o categorical
+
+train_a <- lgb.Dataset(data = data.matrix(iris[trainIndex, -5]), label = lb[trainIndex])
+test_a <- lgb.Dataset.create.valid(train_a, data.matrix(iris[-trainIndex, -5]), label = lb[-trainIndex])
 
 params <- list(objective = "multiclass", metric="multi_error")
-valids <- list(test=test_i)
+valids <- list(test=test_a)
 
-bst <- lgb.train(params, train_i, 20, valids,
-                num_leaves = 4, learning_rate = 0.1, min_data=20, min_hess=20, num_class=3, verbose=1)
+bst <- lgb.train(params, train_a, 20, valids,
+                num_leaves = 4, learning_rate = 0.5, min_data=5, min_hess=5, num_class=3, verbose=1)
+
+toJSON(fromJSON(lgb.dump(bst)), pretty=T)
+
+# w/ categorical
+
+train_b <- lgb.Dataset(data = data.matrix(iris[trainIndex, -5]), label = lb[trainIndex])
+test_b <- lgb.Dataset.create.valid(train_b, data.matrix(iris[-trainIndex, -5]), label = lb[-trainIndex])
+
+params <- list(objective = "multiclass", metric="multi_error")
+valids <- list(test=test_b)
+
+bst <- lgb.train(params, train_b, 20, valids,
+                 num_leaves = 4, learning_rate = 0.5, num_class=3, min_data=5, min_hess=5, verbose=1, categorical_feature = c(0:3))
+
+toJSON(fromJSON(lgb.dump(bst)), pretty=T)
+
 
 # test from docs
 
