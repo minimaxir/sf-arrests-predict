@@ -24,6 +24,8 @@ Setup the R packages.
 library(lightgbm)
 library(Matrix)
 library(caret)
+library(viridis)
+library(ggmap)
 
 source("Rstart.R")
 ```
@@ -57,6 +59,8 @@ df <- df %>% sample_frac()
 
 df %>% head()
 ```
+
+The most recent arrest occured on **`r df$Date %>% max()`**.
 
 # Feature Engineering
 
@@ -108,11 +112,11 @@ Use LightGBM's categorical data feature for optimial performance.
 Use `caret` for train/test splitting since `createDataPartition` ensures balanced distribution of categories between train and test.
 
 ```{r}
-# declare categorical feature names
+# declare categorical feature names, if any
 categoricals <- NULL
 
 # proportion of data to train on
-split <- 0.9
+split <- 0.7
 
 set.seed(123)
 trainIndex <- createDataPartition(df$category_index, p = split, list = FALSE, times = 1)
@@ -130,9 +134,13 @@ params <- list(objective = "multiclass", metric = "multi_logloss")
 valids <- list(test=dtest)
 
 num_classes <- length(unique(df$category_index))
+
+# preformat sizes for use in data visualizations later
+train_size_format <- length(trainIndex) %>% format(big.mark=",")
+test_size_format <- (df %>% nrow() - length(trainIndex)) %>% format(big.mark=",")
 ```
 
-The size of the training set is **`r length(trainIndex) %>% format(big.mark=",")`** and the size of the test set is **`r (df %>% nrow() - length(trainIndex)) %>% format(big.mark=",")`**.
+The size of the training set is **`r train_size_format`** and the size of the test set is **`r test_size_format`**.
 
 ```{r}
 # determine elapsed runtime 
@@ -223,7 +231,7 @@ plot <- ggplot(df_imp, aes(x=Feature, y=Gain)) +
 max_save(plot, "imp", "SF Open Data", h=2)
 ```
 
-
+![](imp.png)
 ## Confusion Matrix
 
 Plot the confusion matrix. Fortunately, matrix is already in long format.
@@ -266,15 +274,16 @@ plot <- ggplot(df_cm, aes(x=label_act, y=label_pred, fill = Freq)) +
           coord_equal() +
           scale_x_discrete() +
           scale_y_discrete() +
-          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.25, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), axis.text.x=element_text(angle=-90, size=6, vjust=0.5, hjust=0), axis.text.y=element_text(size=6)) +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.25, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), axis.text.x=element_text(angle=-90, size=6, vjust=0.5, hjust=0), axis.text.y=element_text(size=6), plot.title = element_text(hjust=1)) +
             scale_fill_viridis(name="# of Preds", labels=comma, breaks=10^(0:4), trans="log10") +
-            labs(title = "Confusion Matrix between 63,144 Predicted SFPD Arrest Labels and Actual",
+            labs(title = sprintf("Confusion Matrix between %s Predicted SFPD Arrest Labels and Actual", test_size_format),
                  x = "Actual Label of Arrest",
                  y = "Predicted Label of Arrest")
 
 max_save(plot, "confusionMatrix", "SF Open Data", h=6, w=5, tall=T)
 ```
 
+![](confusionMatrix.png)
 
 ## Correlations
 
@@ -313,14 +322,16 @@ plot <- ggplot(df_corr, aes(x=label1, y=label2, fill=value)) +
           scale_x_discrete() +
           scale_y_discrete() +
           coord_fixed() +
-          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.25, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90, vjust=0.5, hjust=0), axis.title.y=element_blank(), axis.title.x=element_blank(), plot.title=element_text(hjust=1)) +
+          theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="top", legend.direction="horizontal", legend.key.width=unit(1.25, "cm"), legend.key.height=unit(0.25, "cm"), legend.margin=unit(0,"cm"), panel.margin=element_blank(), axis.text.x=element_text(angle=-90, vjust=0.5, hjust=0), axis.title.y=element_blank(), axis.title.x=element_blank(), plot.title=element_text(hjust=1, size=6)) +
             scale_fill_gradient2(high = "#2ecc71", low = "#e74c3c", mid = "white", 
    midpoint = 0, limit = c(-0.5,0.5), 
    name="Pearson\nCorrelation", breaks=pretty_breaks(8))  +
-            labs(title = "Correlations between Predicted Multiclass Probabilities of 63,144 SFPD Arrest Category Labels")
+            labs(title = sprintf("Correlations between Predicted Multiclass Probabilities of %s SFPD Arrest Category Labels", test_size_format))
 
 max_save(plot, "correlationMatrix", "SF Open Data", h=6, w=5, tall=T)
 ```
+
+![](correlationMatrix.png)
 
 # Mapping Arrests
 
@@ -345,12 +356,12 @@ df_points %>% head()
 df_points %>% nrow()
 ```
 
-Predict arrest types at each point on March 14th, 2017, at 8 PM.
+Predict arrest types at each point on April 15th, 2017, at 8 PM.
 
 Populate data with same format of data (i.e. add month, hour, year, DayOfWeek). Does not require much customization. (DayOfWeek is a Factor, however)
 
 ```{r}
-date_target <- as.POSIXct("2017-04-15 23:00:00")
+date_target <- as.POSIXct("2017-04-15 20:00:00")
 
 df_points <- df_points %>%
               mutate(hour = format(date_target, "%H"),
