@@ -26,6 +26,7 @@ library(Matrix)
 library(caret)
 library(viridis)
 library(ggmap)
+library(randomcoloR)
 
 source("Rstart.R")
 ```
@@ -345,7 +346,7 @@ map <- get_map(location = bbox, source = "stamen", maptype = "toner-lite")
 Create 40000 million latitude/longitude points in SF to simulate locations (200 points on x axis, 2000 points on y axis)
 
 ```{r}
-grid_size = 200
+grid_size <- 200
 
 df_points <- data.frame(expand.grid(X=seq(bbox[1], bbox[3], length.out=grid_size),
                                     Y=seq(bbox[2], bbox[4], length.out=grid_size)
@@ -402,9 +403,82 @@ plot <- ggmap(map) +
             theme(axis.text.x = element_blank(), axis.text.y = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
             theme(legend.title = element_text(size=7, family="Open Sans Condensed Bold"), legend.position="right", legend.key.width=unit(0.5, "cm"), legend.key.height=unit(2, "cm"), legend.margin=margin(1,0,1,0), plot.title=element_text(hjust=0, size=11)) +
             labs(title = sprintf("Locations of Predicted Types of Arrests in San Francisco on %s",
-                 format(date_target, '%B %d, %Y at %I %p')))
+                 format(date_target, '%B %d, %Y at%l %p')))
 
 max_save(plot, sprintf("crime-%s", format(date_target, '%Y-%m-%d-%H')), "SF Open Data", w = 6, h = 6, tall=T)
+```
+
+## Map Animation
+
+Set each label such that is has a consistent color.
+
+```{r}
+set.seed(123)
+cols <- distinctColorPalette(num_classes)
+names(cols) <- df_labels$Category
+
+cols
+```
+
+Plot the map for 24 hours (convert to a GIF using external tools). Reuse code above to generate a map for given date/time + hour delta.
+
+
+```{r}
+system("mkdir -p map_ani")
+
+create_arrest_map <- function(hour_delta, date) {
+  date_target <- date + hour_delta*60*60
+  
+grid_size <- 200
+
+df_points <- data.frame(expand.grid(X=seq(bbox[1], bbox[3], length.out=grid_size),
+                                    Y=seq(bbox[2], bbox[4], length.out=grid_size)
+)
+)
+
+df_points <- df_points %>%
+              mutate(hour = format(date_target, "%H"),
+                    month = format(date_target, "%m"),
+                    year = format(date_target, "%Y"),
+                    DayOfWeek = which(levels(df$DayOfWeek) == format(date_target, "%A"))) %>%
+            data.matrix()
+
+
+
+preds_matrix <- matrix(predict(bst, df_points), byrow=T, nrow(df_points), num_classes)
+
+results <- t(apply(preds_matrix, 1, function (x) {
+  max_index = which(x==max(x))
+  return (c(max_index-1, x[max_index]))
+}))
+
+rm(preds_matrix)
+
+df_results <- data.frame(X=df_points[,1], Y=df_points[,2], label=factor(results[,1]), prob=results[,2]) %>%
+                tbl_df() %>%
+                left_join(df_labels, by=c("label" = "category_index")) %>%
+                mutate(Category = factor(Category))
+
+plot <- ggmap(map) +
+            geom_raster(data = df_results %>% filter(Category != "Other Offenses"), aes(x=X, y=Y, fill=Category), alpha=0.9, size=0) +
+            coord_cartesian() +
+            fte_theme() +
+            scale_fill_manual(values=cols) +
+            theme(axis.text.x = element_blank(), axis.text.y = element_blank(), axis.title.x = element_blank(), axis.title.y = element_blank()) +
+            theme(legend.title = element_text(family="Open Sans Condensed Bold"), legend.position="right", legend.key.width=unit(0.5, "cm"), legend.margin=margin(0,0,0,0, "cm"), legend.key.height=unit(1, "cm"), plot.title=element_text(hjust=0, size=11), legend.text.align=0) +
+            labs(title = sprintf("Locations of Predicted Types of Arrests in San Francisco on %s",
+                 format(date_target, '%B %d, %Y at %l %p')))
+
+max_save(plot, sprintf("map_ani/crime-%s", format(date_target, '%Y-%m-%d-%H')), "SF Open Data", w = 6, h = 6, tall=T)
+
+}
+```
+
+```{r}
+base_date <- as.POSIXct("2017-03-14 06:00:00")
+hour_deltas <- 0:23
+
+x <- lapply(hour_deltas, create_arrest_map, base_date)
 ```
 
 # Code Which Did Not Work Out (One-Hot Encoding)
