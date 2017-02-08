@@ -1,7 +1,7 @@
 ---
-title: "Predicting And Mapping Police Arrest Types in San Francisco with LightGBM and R"
+title: "Predicting And Mapping Arrest Types in San Francisco with LightGBM, R, ggplot2"
 author: "Max Woolf (@minimaxir)"
-date: "January 2nd, 2017"
+date: "2017-02-08"
 output:
   html_notebook:
     highlight: tango
@@ -61,7 +61,7 @@ df <- df %>% sample_frac()
 df %>% head()
 ```
 
-The most recent arrest occured on **`r df$Date %>% max()`**.
+There are **`r df %>% nrow() %>% format(big.mark=',')`** arrests in this dataset.
 
 # Feature Engineering
 
@@ -233,6 +233,7 @@ max_save(plot, "imp", "SF Open Data", h=2)
 ```
 
 ![](imp.png)
+
 ## Confusion Matrix
 
 Plot the confusion matrix. Fortunately, matrix is already in long format.
@@ -293,7 +294,7 @@ Covert the `preds_cor` matrix into long (adapted from http://stackoverflow.com/a
 Requires reordering correlations for cleaner chart: http://www.sthda.com/english/wiki/ggplot2-quick-correlation-matrix-heatmap-r-software-and-data-visualization)
 
 ```{r}
-dd <- as.dist((1-preds_cor)/2)
+dd <- as.dist((1-preds_cor)/2)   # need to look into why this is necessary
 hc <- hclust(dd, "centroid")
 label_order <- hc$order
 preds_cor_reorder <- preds_cor[label_order, label_order]
@@ -516,3 +517,15 @@ preds <- predict(bst, train[1:2,])
 preds
 length(preds)
 ```
+
+# LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2017 Max Woolf
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
